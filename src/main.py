@@ -30,6 +30,8 @@ conn = None
 records = []
 predictions = []
 server_ready = Event()
+scaler_file_path = os.path.join(os.getcwd(), "scaler.pkl")
+
 
 
 # Funzione per avviare il server TCP
@@ -53,6 +55,18 @@ def convert_bigint(data):
         return int(data[:-1])
     else:
         return data
+
+def load_scaler(file_path):
+    try:
+        scaler = joblib.load(file_path)
+        print("Scaler caricato correttamente.")
+        return scaler
+    except PermissionError as e:
+        print(f"Errore di permessi: {e}")
+    except FileNotFoundError as e:
+        print(f"File non trovato: {e}")
+    except Exception as e:
+        print(f"Errore durante il caricamento dello scaler: {e}")
 
 
 def train_model(records):
@@ -88,12 +102,8 @@ def train_model(records):
     joblib.dump(scaler, "scaler.pkl")
 
 
-
-
-
-
 def test_train_model():
-    file_path = "/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/2023.json"
+    file_path = "C:\\Users\\dadob\\Desktop\\F1_AI\\src\\data\\2023.json"
 
     with open(file_path, "r") as file:
         json_data = file.read()
@@ -237,9 +247,12 @@ def test_train_model():
     print("Shape di X_train:", X_train.shape)
     print("Shape di y_train:", y_train.shape)
 
+    print("CPU disponibili:", tf.config.experimental.list_physical_devices("CPU"))
+    print("GPU disponibili:", tf.config.experimental.list_physical_devices("GPU"))
+
     # Disabilita le GPU per evitare errori di memoria
-    print("Disabilitazione delle GPU...")
-    tf.config.experimental.set_visible_devices([], "GPU")
+    # print("Disabilitazione delle GPU...")
+    # tf.config.experimental.set_visible_devices([], "GPU")
 
     # Definisci il modello sequenziale
     model = Sequential()
@@ -274,10 +287,16 @@ def test_train_model():
 
     # Training del modello
     print("Training del modello...")
-    model.fit(X_train, y_train, epochs=2, batch_size=32, callbacks=callbacks)
+    model.fit(X_train, y_train, epochs=50, batch_size=32, callbacks=callbacks)
+
+    print("Fine del training.")
+    print("Salvataggio del modello...")
 
     # Salva il modello
     model.save("f1_deep_learning_model.h5")
+    joblib.dump(scaler, scaler_file_path)
+
+    print("Fine del programma.")
 
 
 
@@ -428,7 +447,7 @@ def start_node_client():
 
 model = None
 scaler = None
-if not os.path.exists("f1_deep_learning_model.h5") or not os.path.exists("scaler.pkl"):
+if not os.path.exists("f1_deep_learning_model.h5"):
     print(
         "Modello non trovato. Raccolta dati per 30 minuti e addestramento del modello."
     )
@@ -450,8 +469,17 @@ if not os.path.exists("f1_deep_learning_model.h5") or not os.path.exists("scaler
         test_train_model()
 else:
     model = tf.keras.models.load_model("f1_deep_learning_model.h5")
+    scaler_file_path = "scaler.pkl"
+    scaler = load_scaler(scaler_file_path)
+
+    if scaler is None:
+        # Se lo scaler non esiste, creane uno nuovo e salvalo
+        scaler = StandardScaler()
+        joblib.dump(scaler, scaler_file_path)
     scaler = joblib.load("scaler.pkl")
     print("Modello trovato. Inizio la raccolta dei dati per le predizioni.")
+
+print("Inizio la raccolta dei dati per le predizioni.")
 
 plt.ion()
 fig, ax = plt.subplots()
