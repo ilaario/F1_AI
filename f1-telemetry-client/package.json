@@ -1,0 +1,107 @@
+{
+  "name": "@racehub-io/f1-telemetry-client",
+  "version": "0.2.12",
+  "main": "build/main/index.js",
+  "types": "build/main/index.d.ts",
+  "files": [
+    "build"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/racehub-io/f1-telemetry-client.git"
+  },
+  "dependencies": {
+    "binary-parser": "^2.2.1",
+    "struct": "^0.0.12"
+  },
+  "devDependencies": {
+    "@babel/cli": "^7.21.5",
+    "@babel/core": "^7.22.1",
+    "@babel/preset-env": "^7.22.4",
+    "@babel/preset-typescript": "^7.21.5",
+    "@types/binary-parser": "^1.5.1",
+    "@types/jest": "^29.5.2",
+    "@types/n-readlines": "^1.0.3",
+    "@types/node": "^20.2.5",
+    "eslint": "^7.32.0",
+    "eslint-plugin-import": "^2.27.5",
+    "gts": "^3.1.1",
+    "husky": "^8.0.3",
+    "jest": "^29.5.0",
+    "lint-staged": "^13.2.2",
+    "n-readlines": "^1.0.1",
+    "rimraf": "^5.0.1",
+    "ts-jest": "^29.1.0",
+    "typescript": "~4.4.0"
+  },
+  "scripts": {
+    "prepublishOnly": "npm run build",
+    "start": "npm run build && node build/main/playground/index.js",
+    "record": "npm run build && node build/main/playground/record.js",
+    "build": "npm run clean && tsc && babel ./src --out-dir build/es5 --extensions .ts",
+    "build:link": "npm run build && npm link",
+    "type-check:watch": "npm run type-check -- --watch",
+    "type-check": "tsc --noEmit",
+    "check": "gts check",
+    "clean": "rimraf ./build",
+    "compile": "tsc -p .",
+    "fix": "gts fix",
+    "test": "jest",
+    "prepare": "npm run compile",
+    "pretest": "npm run compile",
+    "posttest": "npm run lint",
+    "lint": "gts lint"
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
+  },
+  "lint-staged": {
+    "*.{js,ts,css}": [
+      "gts fix",
+      "git add"
+    ]
+  },
+  "keywords": [
+    "automotive",
+    "grand prix",
+    "f12018",
+    "f1 2018",
+    "f12019",
+    "f1 2019",
+    "f12020",
+    "f1 2020",
+    "f12021",
+    "f1 2021",
+    "f12022",
+    "f122",
+    "f1 2022",
+    "f123",
+    "f1 2023",
+    "formula 1",
+    "f1",
+    "codemasters",
+    "udp",
+    "telemetry",
+    "racing",
+    "simracing",
+    "gaming",
+    "formula",
+    "ps4",
+    "ps5",
+    "xbox",
+    "xbox one",
+    "playstation",
+    "playstation 4",
+    "playstation 5",
+    "esports",
+    "e sports",
+    "e-sports",
+    "videogame"
+  ],
+  "engines": {
+    "node": ">=10.6.0"
+  }
+}

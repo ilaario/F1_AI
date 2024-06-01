@@ -1,0 +1,13 @@
+{
+  "name": "ai-project",
+  "version": "1.0.0",
+  "description": "",
+  "main": "src/main.py",
+  "scripts": {
+    "start": "python src/main.py"
+  },
+  "private": true,
+    "dependencies": {
+    "f1-telemetry-client": "file:./f1-telemetry-client"
+  }
+}

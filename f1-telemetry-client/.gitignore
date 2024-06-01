@@ -1,0 +1,7 @@
+node_modules
+.idea
+build
+lib
+.vscode
+.DS_Store
+recordings
