@@ -18,10 +18,6 @@ from sklearn.metrics import mean_squared_error
 from io import StringIO
 from threading import Thread, Event
 
-class CustomCallback(Callback):
-    def on_epoch_end(self, epoch, logs=None):
-        print(f"Epoch {epoch + 1} ended. Logs: {logs}")
-
 
 # Configurazione del socket TCP per ricevere i dati
 TCP_IP = "127.0.0.1"
@@ -31,7 +27,6 @@ records = []
 predictions = []
 server_ready = Event()
 scaler_file_path = os.path.join(os.getcwd(), "scaler.pkl")
-
 
 
 # Funzione per avviare il server TCP
@@ -55,18 +50,6 @@ def convert_bigint(data):
         return int(data[:-1])
     else:
         return data
-
-def load_scaler(file_path):
-    try:
-        scaler = joblib.load(file_path)
-        print("Scaler caricato correttamente.")
-        return scaler
-    except PermissionError as e:
-        print(f"Errore di permessi: {e}")
-    except FileNotFoundError as e:
-        print(f"File non trovato: {e}")
-    except Exception as e:
-        print(f"Errore durante il caricamento dello scaler: {e}")
 
 
 def train_model(records):
@@ -101,203 +84,264 @@ def train_model(records):
     model.save("f1_deep_learning_model.h5")
     joblib.dump(scaler, "scaler.pkl")
 
+class CustomCallback(Callback):
+    def on_epoch_end(self, epoch, logs=None):
+        print(f"Epoch {epoch + 1} ended. Logs: {logs}")
 
-def test_train_model():
-    file_path = "C:\\Users\\dadob\\Desktop\\F1_AI\\src\\data\\2023.json"
+def load_scaler(file_path):
+    try:
+        scaler = joblib.load(file_path)
+        print("Scaler caricato correttamente.")
+        return scaler
+    except PermissionError as e:
+        print(f"Errore di permessi: {e}")
+    except FileNotFoundError as e:
+        print(f"File non trovato: {e}")
+    except Exception as e:
+        print(f"Errore durante il caricamento dello scaler: {e}")
+        return None
 
-    with open(file_path, "r") as file:
-        json_data = file.read()
+def custom_loss(y_true, y_pred):
+    mse = tf.reduce_mean(tf.square(y_true - y_pred))
 
-    data = json.loads(json_data)
+    # Penalità per errori nelle sezioni critiche (es. velocità troppo alta)
+    critical_threshold = 150.0  # Esempio di soglia critica per la velocità
+    speed_penalty = tf.reduce_mean(
+        tf.where(y_true[:, 0] > critical_threshold, tf.square(y_true[:, 0] - y_pred[:, 0]), 0.0))
 
-    # Normalizzare i dati JSON annidati
-    header_df = pd.json_normalize(data["m_header"])
-    telemetry_df = pd.json_normalize(data["m_carTelemetryData"])
+    # Penalità per surriscaldamento gomme
+    tyre_temp_threshold = 100.0  # Soglia di temperatura delle gomme (esempio)
+    tyre_temp_penalty = tf.reduce_mean(
+        tf.where(y_true[:, 20:24] > tyre_temp_threshold, tf.square(y_true[:, 20:24] - y_pred[:, 20:24]), 0.0))
 
-    # Esplodere le colonne che contengono array
-    brakes_temperature_df = telemetry_df["m_brakesTemperature"].apply(pd.Series)
-    tyres_surface_temperature_df = telemetry_df["m_tyresSurfaceTemperature"].apply(pd.Series)
-    tyres_inner_temperature_df = telemetry_df["m_tyresInnerTemperature"].apply(pd.Series)
-    tyres_pressure_df = telemetry_df["m_tyresPressure"].apply(pd.Series)
-    surface_type_df = telemetry_df["m_surfaceType"].apply(pd.Series)
+    # Penalità per sterzata eccessiva
+    steer_penalty = tf.reduce_mean(tf.square(y_true[:, 2] - y_pred[:, 2]))
 
-    # Rinomina le colonne esplose
-    brakes_temperature_df.columns = [
-        f"m_brakesTemperature_{i}" for i in range(brakes_temperature_df.shape[1])
-    ]
-    tyres_surface_temperature_df.columns = [
-        f"m_tyresSurfaceTemperature_{i}"
-        for i in range(tyres_surface_temperature_df.shape[1])
-    ]
-    tyres_inner_temperature_df.columns = [
-        f"m_tyresInnerTemperature_{i}"
-        for i in range(tyres_inner_temperature_df.shape[1])
-    ]
-    tyres_pressure_df.columns = [
-        f"m_tyresPressure_{i}" for i in range(tyres_pressure_df.shape[1])
-    ]
-    surface_type_df.columns = [
-        f"m_surfaceType_{i}" for i in range(surface_type_df.shape[1])
-    ]
+    return mse + speed_penalty + tyre_temp_penalty + steer_penalty
 
-    # Rimuovere le colonne originali dal DataFrame di telemetria
-    telemetry_df.drop(
-        columns=[
-            "m_brakesTemperature",
-            "m_tyresSurfaceTemperature",
-            "m_tyresInnerTemperature",
-            "m_tyresPressure",
-            "m_surfaceType",
-        ],
-        inplace=True,
-    )
+def load_and_normalize_json():
+    # Carica il file JSON riga per riga
+    event_data = []
+    car_telemetry_data = []
+    car_setups_data = []
+    car_damage_data = []
+    car_status_data = []
+    tyre_sets_data = []
+    lap_data = []
+    motion_data = []
 
-    # Combinare i dati esplosi con i dati di telemetria
-    telemetry_df = pd.concat(
-        [
-            telemetry_df,
-            brakes_temperature_df,
-            tyres_surface_temperature_df,
-            tyres_inner_temperature_df,
-            tyres_pressure_df,
-            surface_type_df,
-        ],
-        axis=1,
-    )
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/event_DRSE.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                event_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di events_DRSE.json: {e}")
+                continue
 
-    # Combinare i dati header e telemetry
-    df = pd.concat([header_df] * len(telemetry_df), ignore_index=True)
-    df = pd.concat([df, telemetry_df], axis=1)
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/event_DRSD.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                event_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di events_DRSD.json: {e}")
+                continue
 
-    # Visualizzare i nomi delle colonne
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/tyre_sets.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                tyre_sets_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di tyre_sets.json: {e}")
+                continue
+
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI '
+              'Project/src/data/telemetry_data.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                car_telemetry_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di telemetry_data.json: {e}")
+                continue
+
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/car_setup.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                car_setups_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di car_setup.json: {e}")
+                continue
+
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/car_damage.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                car_damage_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di car_damage.json: {e}")
+                continue
+
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/car_status.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                car_status_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di car_status.json: {e}")
+                continue
+
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/motion.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                motion_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di motion_data.json: {e}")
+                continue
+
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/lap_data.json', 'r') as file:
+        for line in file:
+            try:
+                record = json.loads(line)
+                lap_data.append(record)
+            except json.JSONDecodeError as e:
+                print(f"Errore nella lettura di lap_data.json: {e}")
+                continue
+
+    # Normalizza ogni lista di record JSON in DataFrame separati
+    event_df = pd.json_normalize(event_data)
+    car_telemetry_df = pd.json_normalize(car_telemetry_data, 'm_carTelemetryData', ['m_header'])
+    car_setups_df = pd.json_normalize(car_setups_data, 'm_carSetups', ['m_header'])
+    car_damage_df = pd.json_normalize(car_damage_data, 'm_carDamageData', ['m_header'])
+    car_status_df = pd.json_normalize(car_status_data, 'm_carStatusData', ['m_header'])
+    tyre_sets_df = pd.json_normalize(tyre_sets_data, 'm_tyreSetData', ['m_header'])
+    motion_df = pd.json_normalize(motion_data, 'm_carMotionData', ['m_header'])
+    lap_df = pd.json_normalize(lap_data, 'm_lapData', ['m_header'])
+
+    # Gestione delle colonne con array (esempio per car_telemetry_df)
+    car_telemetry_df = pd.concat([
+        car_telemetry_df.drop(
+            ['m_brakesTemperature', 'm_tyresSurfaceTemperature', 'm_tyresInnerTemperature', 'm_tyresPressure',
+             'm_surfaceType'], axis=1),
+        car_telemetry_df['m_brakesTemperature'].apply(pd.Series).rename(lambda x: f'm_brakesTemperature_{x}',
+                                                                        axis=1),
+        car_telemetry_df['m_tyresSurfaceTemperature'].apply(pd.Series).rename(
+            lambda x: f'm_tyresSurfaceTemperature_{x}', axis=1),
+        car_telemetry_df['m_tyresInnerTemperature'].apply(pd.Series).rename(
+            lambda x: f'm_tyresInnerTemperature_{x}', axis=1),
+        car_telemetry_df['m_tyresPressure'].apply(pd.Series).rename(lambda x: f'm_tyresPressure_{x}', axis=1),
+        car_telemetry_df['m_surfaceType'].apply(pd.Series).rename(lambda x: f'm_surfaceType_{x}', axis=1)
+    ], axis=1)
+
+    # Unisci tutti i DataFrame in uno unico
+    df = pd.concat([event_df, car_telemetry_df, car_setups_df, car_damage_df, car_status_df, tyre_sets_df, motion_df, lap_df],
+                   ignore_index=True, sort=False)
+
+    # Visualizza i nomi delle colonne per verifica
     print(df.columns)
 
-    # Selezionare le colonne rilevanti
-    target_columns = [
-        "m_packetFormat",
-        "m_gameYear",
-        "m_gameMajorVersion",
-        "m_gameMinorVersion",
-        "m_packetVersion",
-        "m_packetId",
-        "m_sessionUID",
-        "m_sessionTime",
-        "m_frameIdentifier",
-        "m_overallFrameIdentifier",
-        "m_playerCarIndex",
-        "m_secondaryPlayerCarIndex",
-        "m_speed",
-        "m_throttle",
-        "m_steer",
-        "m_brake",
-        "m_clutch",
-        "m_gear",
-        "m_engineRPM",
-        "m_drs",
-        "m_revLightsPercent",
-        "m_revLightsBitValue",
-        "m_brakesTemperature_0",
-        "m_brakesTemperature_1",
-        "m_brakesTemperature_2",
-        "m_brakesTemperature_3",
-        "m_tyresSurfaceTemperature_0",
-        "m_tyresSurfaceTemperature_1",
-        "m_tyresSurfaceTemperature_2",
-        "m_tyresSurfaceTemperature_3",
-        "m_tyresInnerTemperature_0",
-        "m_tyresInnerTemperature_1",
-        "m_tyresInnerTemperature_2",
-        "m_tyresInnerTemperature_3",
-        "m_engineTemperature",
-        "m_tyresPressure_0",
-        "m_tyresPressure_1",
-        "m_tyresPressure_2",
-        "m_tyresPressure_3",
-        "m_surfaceType_0",
-        "m_surfaceType_1",
-        "m_surfaceType_2",
-        "m_surfaceType_3",
-    ]
+    return df
+
+def test_train_model():
+
+    # Carica e normalizza i dati JSON
+    df = load_and_normalize_json()
 
     # Verifica che tutte le colonne esistano
-    missing_columns = [col for col in target_columns if col not in df.columns]
-    print("Missing columns:", missing_columns)
+    print("Colonne disponibili nel DataFrame:", df.columns)
 
-    # Selezionare i dati per il training
-    target = df[target_columns]
+    # Selezionare solo le colonne numeriche per X_train
+    X_train = df.select_dtypes(include=[np.number])
+
+    # Rimuovere le colonne target da X_train se sono presenti
+    y_columns = ['m_speed', 'm_throttle', 'm_steer', 'm_brake', 'm_clutch', 'm_gear', 'm_engineRPM',
+                 'm_tyresSurfaceTemperature_0', 'm_tyresSurfaceTemperature_1', 'm_tyresSurfaceTemperature_2',
+                 'm_tyresSurfaceTemperature_3']
+    X_train = X_train.drop(columns=y_columns, errors='ignore')
+
+    y_train = df[y_columns]
 
     # Espandi la dimensione del tuo input
-    X_train = np.expand_dims(target.values, axis=1)
+    X_train = np.expand_dims(X_train.values, axis=1)
 
-    # Convertire X_train in float32
-    X_train = X_train.astype("float32")
-
-    print(X_train.shape)
-
-    # Selezionare la colonna target (ad esempio, 'm_speed')
-    y_train = target["m_speed"].values
-
-    # Reshape di y_train per avere la forma corretta
-    y_train = y_train.reshape(-1, 1)
-
-    # Convertire y_train in float32
-    y_train = y_train.astype("float32")
+    # Convertire X_train e y_train in float32
+    X_train = X_train.astype('float32')
+    y_train = y_train.astype('float32')
 
     # Verificare le forme dei dati
     print("Shape di X_train:", X_train.shape)
     print("Shape di y_train:", y_train.shape)
 
-    print("CPU disponibili:", tf.config.experimental.list_physical_devices("CPU"))
-    print("GPU disponibili:", tf.config.experimental.list_physical_devices("GPU"))
+    # Carica lo scaler se esiste
+    scaler_X_file_path = "scaler_X.pkl"
+    scaler_y_file_path = "scaler_y.pkl"
 
-    # Disabilita le GPU per evitare errori di memoria
-    # print("Disabilitazione delle GPU...")
-    # tf.config.experimental.set_visible_devices([], "GPU")
+    scaler_X = load_scaler(scaler_X_file_path)
+    scaler_y = load_scaler(scaler_y_file_path)
+
+    if scaler_X is None or scaler_y is None:
+        # Se gli scaler non esistono, creane uno nuovo e salvalo
+        scaler_X = StandardScaler()
+        scaler_y = StandardScaler()
+        X_train_scaled = scaler_X.fit_transform(X_train.reshape(-1, X_train.shape[-1])).reshape(X_train.shape)
+        y_train_scaled = scaler_y.fit_transform(y_train)
+        joblib.dump(scaler_X, scaler_X_file_path)
+        joblib.dump(scaler_y, scaler_y_file_path)
+    else:
+        try:
+            X_train_scaled = scaler_X.transform(X_train.reshape(-1, X_train.shape[-1])).reshape(X_train.shape)
+            y_train_scaled = scaler_y.transform(y_train)
+        except ValueError as e:
+            scaler_X = StandardScaler()
+            scaler_y = StandardScaler()
+            X_train_scaled = scaler_X.fit_transform(X_train.reshape(-1, X_train.shape[-1])).reshape(X_train.shape)
+            y_train_scaled = scaler_y.fit_transform(y_train)
+            joblib.dump(scaler_X, scaler_X_file_path)
+            joblib.dump(scaler_y, scaler_y_file_path)
 
     # Definisci il modello sequenziale
     model = Sequential()
 
-    # Aggiungi il livello di input, specificando la forma (1, 43)
-    print("Aggiunta del livello di input...")
-    model.add(Input(shape=(1, 43)))
+    print("Disabilitazione delle GPU...")
+    tf.config.set_visible_devices([], 'GPU')
 
-    # Aggiungi un livello LSTM
+    print("Aggiunta del livello di input...")
+    model.add(Input(shape=(1, X_train_scaled.shape[-1])))
+
     print("Aggiunta del livello LSTM...")
     model.add(LSTM(units=50, return_sequences=True))
 
-    # Aggiungi un altro livello LSTM se necessario
     print("Aggiunta del secondo livello LSTM...")
     model.add(LSTM(units=50))
 
-    # Aggiungi un livello denso per l'output
     print("Aggiunta del livello denso per l'output...")
-    model.add(Dense(units=1))
+    model.add(Dense(units=y_train.shape[-1]))
 
-    # Compila il modello
-    print("Compilazione del modello...")
-    model.compile(optimizer="adam", loss="mean_squared_error", metrics=["mae"])
+    print("Compilazione del modello con Adam e custom loss...")
+    model.compile(optimizer='adam', loss=custom_loss)
 
-    # Stampa il sommario del modello
     print("Sommario del modello:")
     model.summary()
 
-    # Definisci i callback
-    print("Definizione dei callback...")
-    callbacks = [ProgbarLogger()]
-
-    # Training del modello
     print("Training del modello...")
-    model.fit(X_train, y_train, epochs=50, batch_size=32, callbacks=callbacks)
+    callbacks = [ProgbarLogger(), CustomCallback()]
+    model.fit(X_train_scaled, y_train_scaled, epochs=10, batch_size=32, callbacks=callbacks)
 
-    print("Fine del training.")
-    print("Salvataggio del modello...")
+    print("Predizione con il modello addestrato...")
+    y_pred_scaled = model.predict(X_train_scaled)
+    y_pred = scaler_y.inverse_transform(y_pred_scaled)
+    mse = mean_squared_error(y_train, y_pred)
+    print(f'Mean Squared Error: {mse}')
 
-    # Salva il modello
-    model.save("f1_deep_learning_model.h5")
-    joblib.dump(scaler, scaler_file_path)
+    model.save('f1_deep_learning_model.h5')
+    joblib.dump(scaler_X, scaler_X_file_path)
+    joblib.dump(scaler_y, scaler_y_file_path)
 
     print("Fine del programma.")
-
 
 
 def preprocess_and_predict(data, model, scaler):
