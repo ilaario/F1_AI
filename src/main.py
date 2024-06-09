@@ -1,5 +1,7 @@
 import os
 import json
+import sys
+
 import pandas as pd
 import joblib
 import numpy as np
@@ -10,13 +12,21 @@ import subprocess
 import tensorflow as tf
 from keras import Input
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Dense, LSTM
-from sklearn.preprocessing import StandardScaler
+from tensorflow.keras.layers import Dense, LSTM, Dropout
+from sklearn.preprocessing import StandardScaler, MinMaxScaler
 from sklearn.model_selection import train_test_split
 from keras.callbacks import ProgbarLogger, Callback
 from sklearn.metrics import mean_squared_error
 from io import StringIO
 from threading import Thread, Event
+
+
+def print_progress_bar(iteration, total, length=50):
+    percent = ("{0:.1f}").format(100 * (iteration / float(total)))
+    filled_length = int(length * iteration // total)
+    bar = '█' * filled_length + '-' * (length - filled_length)
+    sys.stdout.write(f'\r|{bar}| {percent}% Complete')
+    sys.stdout.flush()
 
 
 # Configurazione del socket TCP per ricevere i dati
@@ -40,7 +50,6 @@ def start_tcp_server():
     conn, addr = sock.accept()
     print(f"Connected by {addr}")
 
-
 def convert_bigint(data):
     if isinstance(data, dict):
         return {key: convert_bigint(value) for key, value in data.items()}
@@ -50,39 +59,6 @@ def convert_bigint(data):
         return int(data[:-1])
     else:
         return data
-
-
-def train_model(records):
-    df = pd.DataFrame(records)
-    df.dropna(inplace=True)
-
-    features = df.drop(["sessionTime", "steer", "throttle", "brake"], axis=1)
-    target = df[["steer", "throttle", "brake"]]
-
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features)
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        features_scaled, target, test_size=0.2, random_state=42
-    )
-
-    model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=(1, X_train.shape[1])))
-    model.add(LSTM(50))
-    model.add(Dense(3))  # 3 output: steer, throttle, brake
-
-    model.compile(optimizer="adam", loss="mse")
-
-    model.fit(
-        X_train, y_train, epochs=50, batch_size=32, validation_data=(X_test, y_test)
-    )
-
-    y_pred = model.predict(X_test)
-    mse = mean_squared_error(y_test, y_pred)
-    print(f"Mean Squared Error: {mse}")
-
-    model.save("f1_deep_learning_model.h5")
-    joblib.dump(scaler, "scaler.pkl")
 
 class CustomCallback(Callback):
     def on_epoch_end(self, epoch, logs=None):
@@ -130,25 +106,16 @@ def load_and_normalize_json():
     lap_data = []
     motion_data = []
 
-    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/event_DRSE.json', 'r') as file:
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/events.json', 'r') as file:
         for line in file:
             try:
                 record = json.loads(line)
                 event_data.append(record)
             except json.JSONDecodeError as e:
-                print(f"Errore nella lettura di events_DRSE.json: {e}")
+                print(f"Errore nella lettura di events.json: {e}")
                 continue
 
-    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/event_DRSD.json', 'r') as file:
-        for line in file:
-            try:
-                record = json.loads(line)
-                event_data.append(record)
-            except json.JSONDecodeError as e:
-                print(f"Errore nella lettura di events_DRSD.json: {e}")
-                continue
-
-    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/tyre_sets.json', 'r') as file:
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/tyreSets.json', 'r') as file:
         for line in file:
             try:
                 record = json.loads(line)
@@ -158,7 +125,7 @@ def load_and_normalize_json():
                 continue
 
     with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI '
-              'Project/src/data/telemetry_data.json', 'r') as file:
+              'Project/src/data/carTelemetry.json', 'r') as file:
         for line in file:
             try:
                 record = json.loads(line)
@@ -167,7 +134,7 @@ def load_and_normalize_json():
                 print(f"Errore nella lettura di telemetry_data.json: {e}")
                 continue
 
-    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/car_setup.json', 'r') as file:
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/carSetups.json', 'r') as file:
         for line in file:
             try:
                 record = json.loads(line)
@@ -176,7 +143,7 @@ def load_and_normalize_json():
                 print(f"Errore nella lettura di car_setup.json: {e}")
                 continue
 
-    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/car_damage.json', 'r') as file:
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/carDamage.json', 'r') as file:
         for line in file:
             try:
                 record = json.loads(line)
@@ -185,7 +152,7 @@ def load_and_normalize_json():
                 print(f"Errore nella lettura di car_damage.json: {e}")
                 continue
 
-    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/car_status.json', 'r') as file:
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/carStatus.json', 'r') as file:
         for line in file:
             try:
                 record = json.loads(line)
@@ -203,7 +170,7 @@ def load_and_normalize_json():
                 print(f"Errore nella lettura di motion_data.json: {e}")
                 continue
 
-    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/lap_data.json', 'r') as file:
+    with open('/Users/ilaario/Desktop/AAU/Artificial Intelligence & Machine Learning/AI Project/src/data/lapData.json', 'r') as file:
         for line in file:
             try:
                 record = json.loads(line)
@@ -246,7 +213,48 @@ def load_and_normalize_json():
 
     return df
 
-def test_train_model():
+
+def normalize_records(records):
+    if not records:
+        return records
+
+    # Trova tutte le chiavi presenti in tutti i record
+    all_keys = set()
+    for record in records:
+        all_keys.update(record.keys())
+
+    # Assicura che tutti i record abbiano le stesse chiavi
+    for record in records:
+        for key in all_keys:
+            if key not in record:
+                record[key] = None
+
+    data = {key: [] for key in all_keys}
+
+    for record in records:
+        for key in record:
+            data[key].append(record[key])
+
+    for key in data:
+        if key != "sessionTime" and data[key][0] is not None:  # Evita di normalizzare il tempo della sessione
+            min_val = min(x for x in data[key] if x is not None)
+            max_val = max(x for x in data[key] if x is not None)
+            if min_val == max_val:  # Evita divisione per zero
+                data[key] = [0.5 if x is not None else None for x in data[key]]
+            else:
+                data[key] = [(x - min_val) / (max_val - min_val) if x is not None else None for x in data[key]]
+
+    for i, record in enumerate(records):
+        for key in record:
+            if key != "sessionTime" and data[key][i] is not None:
+                record[key] = data[key][i]
+
+    return records
+
+
+def train_model():
+
+    start_json_node_client()
 
     # Carica e normalizza i dati JSON
     df = load_and_normalize_json()
@@ -303,26 +311,16 @@ def test_train_model():
             joblib.dump(scaler_X, scaler_X_file_path)
             joblib.dump(scaler_y, scaler_y_file_path)
 
-    # Definisci il modello sequenziale
-    model = Sequential()
-
     print("Disabilitazione delle GPU...")
     tf.config.set_visible_devices([], 'GPU')
 
-    print("Aggiunta del livello di input...")
-    model.add(Input(shape=(1, X_train_scaled.shape[-1])))
-
-    print("Aggiunta del livello LSTM...")
-    model.add(LSTM(units=50, return_sequences=True))
-
-    print("Aggiunta del secondo livello LSTM...")
-    model.add(LSTM(units=50))
-
-    print("Aggiunta del livello denso per l'output...")
-    model.add(Dense(units=y_train.shape[-1]))
-
-    print("Compilazione del modello con Adam e custom loss...")
-    model.compile(optimizer='adam', loss=custom_loss)
+    model = Sequential()
+    model.add(LSTM(50, return_sequences=True, input_shape=(X_train_scaled.shape[1], X_train_scaled.shape[2])))
+    model.add(Dropout(0.2))  # Regolarizzazione per evitare l'overfitting
+    model.add(LSTM(50, return_sequences=False))
+    model.add(Dropout(0.2))
+    model.add(Dense(y_train_scaled.shape[1]))  # Numero di neuroni uguale al numero di colonne target
+    model.compile(optimizer='adam', loss='mean_squared_error')
 
     print("Sommario del modello:")
     model.summary()
@@ -343,7 +341,6 @@ def test_train_model():
 
     print("Fine del programma.")
 
-
 def preprocess_and_predict(data, model, scaler):
     features = pd.DataFrame(data)
     features_scaled = scaler.transform(features)
@@ -353,7 +350,6 @@ def preprocess_and_predict(data, model, scaler):
     predictions = model.predict(features_scaled)
     return predictions
 
-
 def read_process_output(proc):
     while True:
         output = proc.stdout.readline()
@@ -361,7 +357,6 @@ def read_process_output(proc):
             break
         if output:
             print(output.strip())
-
 
 def collect_data():
     global conn, records
@@ -373,7 +368,6 @@ def collect_data():
         while time.time() - start_time < 10:  # 30 minuti
             data = conn.recv(4096).decode("utf-8")
             if not data:
-                print("Nessun dato ricevuto.")
                 continue
             buffer += data
             try:
@@ -383,8 +377,99 @@ def collect_data():
                     if not packet:
                         continue
                     json_packet = json.loads(packet.strip())
-                    json_packet = convert_bigint(json_packet)
-                    if json_packet["m_header"]["m_packetId"] == 6:
+                    #json_packet = convert_bigint(json_packet)
+                    if json_packet["m_header"]["m_packetId"] == 0: # motion packet ricevuto
+                        print("Motion packet ricevuto.")
+                        session_time = json_packet["m_header"]["m_sessionTime"]
+                        for car_motion in json_packet["m_carMotionData"]:
+                            record = {
+                                "sessionTime": session_time,
+                                "worldPositionX": car_motion["m_worldPositionX"],
+                                "worldPositionY": car_motion["m_worldPositionY"],
+                                "worldPositionZ": car_motion["m_worldPositionZ"],
+                                "worldVelocityX": car_motion["m_worldVelocityX"],
+                                "worldVelocityY": car_motion["m_worldVelocityY"],
+                                "worldVelocityZ": car_motion["m_worldVelocityZ"],
+                                "worldForwardDirX": car_motion["m_worldForwardDirX"],
+                                "worldForwardDirY": car_motion["m_worldForwardDirY"],
+                                "worldForwardDirZ": car_motion["m_worldForwardDirZ"],
+                                "worldRightDirX": car_motion["m_worldRightDirX"],
+                                "worldRightDirY": car_motion["m_worldRightDirY"],
+                                "worldRightDirZ": car_motion["m_worldRightDirZ"],
+                                "gForceLateral": car_motion["m_gForceLateral"],
+                                "gForceLongitudinal": car_motion["m_gForceLongitudinal"],
+                                "gForceVertical": car_motion["m_gForceVertical"],
+                                "yaw": car_motion["m_yaw"],
+                                "pitch": car_motion["m_pitch"],
+                                "roll": car_motion["m_roll"],
+                            }
+                            records.append(record)
+                    elif json_packet["m_header"]["m_packetId"] == 2: # lap data package
+                        print("Lap data package ricevuto.")
+                        session_time = json_packet["m_header"]["m_sessionTime"]
+                        for lap_data in json_packet["m_lapData"]:
+                            record = {
+                                "sessionTime": session_time,
+                                "lastLapTime": lap_data["m_lastLapTimeInMS"],
+                                "currentLapTime": lap_data["m_currentLapTimeInMS"],
+                                "sector1Time": lap_data["m_sector1TimeInMS"],
+                                "sector2Time": lap_data["m_sector2TimeInMS"],
+                                "lapDistance": lap_data["m_lapDistance"],
+                                "totalDistance": lap_data["m_totalDistance"],
+                                "safetyCarDelta": lap_data["m_safetyCarDelta"],
+                                "carPosition": lap_data["m_carPosition"],
+                                "currentLapNum": lap_data["m_currentLapNum"],
+                                "pitStatus": lap_data["m_pitStatus"],
+                                "sector": lap_data["m_sector"],
+                                "currentLapInvalid": lap_data["m_currentLapInvalid"],
+                                "penalties": lap_data["m_penalties"],
+                                "gridPosition": lap_data["m_gridPosition"],
+                                "driverStatus": lap_data["m_driverStatus"],
+                                "resultStatus": lap_data["m_resultStatus"]
+                            }
+                            records.append(record)
+                    elif json_packet["m_header"]["m_packetId"] == 3: # event package
+                        print("Event package ricevuto.")
+                        # check only DRSE and DRSD events
+                        if json_packet["m_eventStringCode"] == "DRSE" or json_packet["m_eventStringCode"] == "DRSD":
+                            session_time = json_packet["m_header"]["m_sessionTime"]
+                            record = {
+                                "sessionTime": session_time,
+                                "eventStringCode": json_packet["m_eventStringCode"]
+                            }
+                            records.append(record)
+                    elif json_packet["m_header"]["m_packetId"] == 5: # car setups package
+                        print("Car setups package ricevuto.")
+                        session_time = json_packet["m_header"]["m_sessionTime"]
+                        for car_setup in json_packet["m_carSetups"]:
+                            record = {
+                                "sessionTime": session_time,
+                                "frontWing": car_setup["m_frontWing"],
+                                "rearWing": car_setup["m_rearWing"],
+                                "onThrottle": car_setup["m_onThrottle"],
+                                "offThrottle": car_setup["m_offThrottle"],
+                                "frontCamber": car_setup["m_frontCamber"],
+                                "rearCamber": car_setup["m_rearCamber"],
+                                "frontToe": car_setup["m_frontToe"],
+                                "rearToe": car_setup["m_rearToe"],
+                                "frontSuspension": car_setup["m_frontSuspension"],
+                                "rearSuspension": car_setup["m_rearSuspension"],
+                                "frontAntiRollBar": car_setup["m_frontAntiRollBar"],
+                                "rearAntiRollBar": car_setup["m_rearAntiRollBar"],
+                                "frontSuspensionHeight": car_setup["m_frontSuspensionHeight"],
+                                "rearSuspensionHeight": car_setup["m_rearSuspensionHeight"],
+                                "brakePressure": car_setup["m_brakePressure"],
+                                "brakeBias": car_setup["m_brakeBias"],
+                                "rearLeftTyrePressure": car_setup["m_rearLeftTyrePressure"],
+                                "rearRightTyrePressure": car_setup["m_rearRightTyrePressure"],
+                                "frontLeftTyrePressure": car_setup["m_frontLeftTyrePressure"],
+                                "frontRightTyrePressure": car_setup["m_frontRightTyrePressure"],
+                                "ballast": car_setup["m_ballast"],
+                                "fuelLoad": car_setup["m_fuelLoad"],
+                            }
+                            records.append(record)
+                    elif json_packet["m_header"]["m_packetId"] == 6:
+                        print("Car telemetry package ricevuto.")
                         session_time = json_packet["m_header"]["m_sessionTime"]
                         for car_telemetry in json_packet["m_carTelemetryData"]:
                             record = {
@@ -450,6 +535,96 @@ def collect_data():
                                 "surfaceType_RR": car_telemetry["m_surfaceType"][3],
                             }
                             records.append(record)
+                    elif json_packet["m_header"]["m_packetId"] == 7:
+                        print("Car status package ricevuto.")
+                        session_time = json_packet["m_header"]["m_sessionTime"]
+                        for car_status in json_packet["m_carStatusData"]:
+                            record = {
+                                "sessionTime": session_time,
+                                "tractionControl": car_status["m_tractionControl"],
+                                "antiLockBrakes": car_status["m_antiLockBrakes"],
+                                "fuelMix": car_status["m_fuelMix"],
+                                "frontBrakeBias": car_status["m_frontBrakeBias"],
+                                "pitLimiterStatus": car_status["m_pitLimiterStatus"],
+                                "fuelInTank": car_status["m_fuelInTank"],
+                                "fuelCapacity": car_status["m_fuelCapacity"],
+                                "fuelRemainingLaps": car_status["m_fuelRemainingLaps"],
+                                "maxRPM": car_status["m_maxRPM"],
+                                "idleRPM": car_status["m_idleRPM"],
+                                "maxGears": car_status["m_maxGears"],
+                                "drsAllowed": car_status["m_drsAllowed"],
+                                "drsActivationDistance": car_status["m_drsActivationDistance"],
+                                "actualTyreCompound": car_status["m_actualTyreCompound"],
+                                "visualTyreCompound": car_status["m_visualTyreCompound"],
+                                "tyresAgeLaps": car_status["m_tyresAgeLaps"],
+                                "vehicleFiaFlags": car_status["m_vehicleFiaFlags"],
+                                "ersStoreEnergy": car_status["m_ersStoreEnergy"],
+                                "ersDeployMode": car_status["m_ersDeployMode"],
+                                "ersHarvestedThisLapMGUK": car_status["m_ersHarvestedThisLapMGUK"],
+                                "ersHarvestedThisLapMGUH": car_status["m_ersHarvestedThisLapMGUH"],
+                                "ersDeployedThisLap": car_status["m_ersDeployedThisLap"],
+                            }
+                            records.append(record)
+                    elif json_packet["m_header"]["m_packetId"] == 10: # car damage package
+                        print("Car damage package ricevuto.")
+                        session_time = json_packet["m_header"]["m_sessionTime"]
+                        for car_damage in json_packet["m_carDamageData"]:
+                            record = {
+                                "sessionTime": session_time,
+                                "tyresWear_FL": car_damage["m_tyresWear"][0],
+                                "tyresWear_FR": car_damage["m_tyresWear"][1],
+                                "tyresWear_RL": car_damage["m_tyresWear"][2],
+                                "tyresWear_RR": car_damage["m_tyresWear"][3],
+                                "tyresDamage_FL": car_damage["m_tyresDamage"][0],
+                                "tyresDamage_FR": car_damage["m_tyresDamage"][1],
+                                "tyresDamage_RL": car_damage["m_tyresDamage"][2],
+                                "tyresDamage_RR": car_damage["m_tyresDamage"][3],
+                                "brakesDamage_FL": car_damage["m_brakesDamage"][0],
+                                "brakesDamage_FR": car_damage["m_brakesDamage"][1],
+                                "brakesDamage_RL": car_damage["m_brakesDamage"][2],
+                                "brakesDamage_RR": car_damage["m_brakesDamage"][3],
+                                "frontLeftWingDamage": car_damage["m_frontLeftWingDamage"],
+                                "frontRightWingDamage": car_damage["m_frontRightWingDamage"],
+                                "rearWingDamage": car_damage["m_rearWingDamage"],
+                                "floorDamage": car_damage["m_floorDamage"],
+                                "diffuserDamage": car_damage["m_diffuserDamage"],
+                                "sidepodDamage": car_damage["m_sidepodDamage"],
+                                "drsFault": car_damage["m_drsFault"],
+                                "ersFault": car_damage["m_ersFault"],
+                                "gearBoxDamage": car_damage["m_gearBoxDamage"],
+                                "engineDamage": car_damage["m_engineDamage"],
+                                "engineMGUHWear": car_damage["m_engineMGUHWear"],
+                                "engineESWear": car_damage["m_engineESWear"],
+                                "engineCEWear": car_damage["m_engineCEWear"],
+                                "engineICEWear": car_damage["m_engineICEWear"],
+                                "engineMGUKWear": car_damage["m_engineMGUKWear"],
+                                "engineTCWear": car_damage["m_engineTCWear"],
+                                "engineBlown": car_damage["m_engineBlown"],
+                                "engineSeized": car_damage["m_engineSeized"]
+                            }
+                            records.append(record)
+                    elif json_packet["m_header"]["m_packetId"] == 12: # tyre sets package
+                        print("Tyre sets package ricevuto.")
+                        session_time = json_packet["m_header"]["m_sessionTime"]
+                        for tyre_set in json_packet["m_tyreSetData"]:
+                            record = {
+                                "sessionTime": session_time,
+                                "tyreCompound": tyre_set["m_actualTyreCompound"],
+                                "visualTyreCompound": tyre_set["m_visualTyreCompound"],
+                                "wear": tyre_set["m_wear"],
+                                "available": tyre_set["m_available"],
+                                "recommendedSession": tyre_set["m_recommendedSession"],
+                                "lifeSpan": tyre_set["m_lifeSpan"],
+                                "usableLife": tyre_set["m_usableLife"],
+                                "lapDeltaTime": tyre_set["m_lapDeltaTime"],
+                                "fitted": tyre_set["m_fitted"]
+                            }
+                            records.append(record)
+
+                    else:
+                        print(f"Packet ID non gestito: {json_packet['m_header']['m_packetId']}")
+                        continue
+
             except json.JSONDecodeError as e:
                 print(f"Errore nella decodifica del JSON: {e}")
                 continue
@@ -468,10 +643,40 @@ def collect_data():
 
     train_model(records)
 
+def start_json_node_client():
+    telemetry_script = "node src/telemetry_to_json.mjs"
+
+    try:
+        proc = subprocess.Popen(
+            telemetry_script,
+            shell=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        print(f"Avviato script: {telemetry_script}")
+
+        thread = Thread(target=read_process_output, args=(proc,))
+        thread.start()
+
+        time.sleep(5)
+
+        # wait for 30 minutes and then kill the process
+        total_seconds = 30 * 60
+
+        for elapsed_seconds in range(total_seconds + 1):
+            print_progress_bar(elapsed_seconds, total_seconds)
+            time.sleep(1)  # Attende un secondo tra ogni iterazione
+        print()  # Per andare a capo alla fine della barra di avanzamento
+
+        proc.kill()
+    except Exception as e:
+        print(f"Errore nell'avvio dello script: {e}")
+        exit(1)
 
 def start_node_client():
-    global proc
-    telemetry_script = "node src/telemetry.mjs"
+    telemetry_script = "node src/telemetry_to_json.mjs"
+
     try:
         proc = subprocess.Popen(
             telemetry_script,
@@ -495,22 +700,7 @@ if not os.path.exists("f1_deep_learning_model.h5"):
     print(
         "Modello non trovato. Raccolta dati per 30 minuti e addestramento del modello."
     )
-    print("Training del modello con dati reali (1) o generati (2):")
-    choice = input()
-    if choice == "1":
-        # Avvia il server TCP in un thread separato
-        tcp_thread = Thread(target=start_tcp_server)
-        tcp_thread.start()
-
-        # Aspetta che il server TCP sia pronto
-        server_ready.wait()
-
-        # Avvia il client Node.js
-        node_thread = Thread(target=start_node_client)
-        node_thread.start()
-        collect_data()
-    elif choice == "2":
-        test_train_model()
+    train_model()
 else:
     model = tf.keras.models.load_model("f1_deep_learning_model.h5")
     scaler_file_path = "scaler.pkl"

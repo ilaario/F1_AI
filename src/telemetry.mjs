@@ -17,11 +17,57 @@ socket.connect(TCP_PORT, TCP_HOST, () => {
 
 console.log("TLM: Collecting data...");
 
+/*
 client.on(PACKETS.carTelemetry, (data) => {
   const message = stringifyWithBigInt(data);
   //console.log(message);
   socket.write(message + '\n'); // Aggiungi newline per separare i messaggi
 });
+
+client.on(PACKETS.carDamage, (data) => {
+  const message = stringifyWithBigInt(data);
+  //console.log(message);
+  socket.write(message + '\n'); // Aggiungi newline per separare i messaggi
+});
+
+client.on(PACKETS.carSetups, (data) => {
+  const message = stringifyWithBigInt(data);
+  //console.log(message);
+  socket.write(message + '\n'); // Aggiungi newline per separare i messaggi
+});
+
+client.on(PACKETS.carStatus, (data) => {
+  const message = stringifyWithBigInt(data);
+  //console.log(message);
+  socket.write(message + '\n'); // Aggiungi newline per separare i messaggi
+});
+
+client.on(PACKETS.event, (data) => {
+  const message = stringifyWithBigInt(data);
+  //console.log(message);
+  socket.write(message + '\n'); // Aggiungi newline per separare i messaggi
+});
+
+client.on(PACKETS.lapData, (data) => {
+  const message = stringifyWithBigInt(data);
+  //console.log(message);
+  socket.write(message + '\n'); // Aggiungi newline per separare i messaggi
+});
+
+client.on(PACKETS.motion, (data) => {
+  const message = stringifyWithBigInt(data);
+  //console.log(message);
+  socket.write(message + '\n'); // Aggiungi newline per separare i messaggi
+});
+
+client.on(PACKETS.tyreSets, (data) => {
+  const message = stringifyWithBigInt(data);
+  //console.log(message);
+  socket.write(message + '\n'); // Aggiungi newline per separare i messaggi
+});
+*/
+
+// scrive i dati su file json
 
 // to start listening:
 client.start();
