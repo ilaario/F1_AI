@@ -1,3 +1,4 @@
+import math
 import os
 import json
 import sys
@@ -10,6 +11,19 @@ import matplotlib.pyplot as plt
 import time
 import subprocess
 import tensorflow as tf
+
+import torch
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+
+import gymnasium as gym
+from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecMonitor
+from stable_baselines3.common.evaluation import evaluate_policy
+from sklearn.preprocessing import StandardScaler
+
+
 from keras import Input
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, LSTM, Dropout
@@ -19,6 +33,8 @@ from keras.callbacks import ProgbarLogger, Callback
 from sklearn.metrics import mean_squared_error
 from io import StringIO
 from threading import Thread, Event
+
+from torch.utils.data import TensorDataset, DataLoader
 
 
 def print_progress_bar(iteration, total, length=50):
@@ -78,22 +94,27 @@ def load_scaler(file_path):
         return None
 
 def custom_loss(y_true, y_pred):
-    mse = tf.reduce_mean(tf.square(y_true - y_pred))
+    mse = torch.mean((y_true - y_pred) ** 2)
 
     # Penalità per errori nelle sezioni critiche (es. velocità troppo alta)
     critical_threshold = 150.0  # Esempio di soglia critica per la velocità
-    speed_penalty = tf.reduce_mean(
-        tf.where(y_true[:, 0] > critical_threshold, tf.square(y_true[:, 0] - y_pred[:, 0]), 0.0))
+    speed_penalty = torch.mean(
+        torch.where(y_true[:, 0] > critical_threshold, (y_true[:, 0] - y_pred[:, 0]) ** 2, torch.tensor(0.0).to(y_true.device))
+    )
 
     # Penalità per surriscaldamento gomme
     tyre_temp_threshold = 100.0  # Soglia di temperatura delle gomme (esempio)
-    tyre_temp_penalty = tf.reduce_mean(
-        tf.where(y_true[:, 20:24] > tyre_temp_threshold, tf.square(y_true[:, 20:24] - y_pred[:, 20:24]), 0.0))
+    tyre_temp_penalty = torch.mean(
+        torch.where(y_true[:, 20:24] > tyre_temp_threshold, (y_true[:, 20:24] - y_pred[:, 20:24]) ** 2, torch.tensor(0.0).to(y_true.device))
+    )
 
     # Penalità per sterzata eccessiva
-    steer_penalty = tf.reduce_mean(tf.square(y_true[:, 2] - y_pred[:, 2]))
+    steer_penalty = torch.mean((y_true[:, 2] - y_pred[:, 2]) ** 2)
 
-    return mse + speed_penalty + tyre_temp_penalty + steer_penalty
+    # Penalità per valori negativi nei risultati
+    negative_penalty = torch.mean(torch.where(y_pred < 0, y_pred ** 2, torch.tensor(0.0).to(y_pred.device)))
+
+    return mse + speed_penalty + tyre_temp_penalty + steer_penalty + negative_penalty
 
 def load_and_normalize_json():
     # Carica il file JSON riga per riga
@@ -251,95 +272,200 @@ def normalize_records(records):
 
     return records
 
+class CarSimulator:
+    def __init__(self):
+        self.speed = 0.0
+        self.rpm = 4500
+        self.gear = 1
+        self.position = [0.0, 0.0]  # posizione X, Y
+        self.direction = 0.0  # angolo di direzione
+        self.max_rpm = 14000
+        self.max_speed = 350
+        self.gear_ratios = [0, 88.3, 72.3, 60.1, 51.2, 44.9, 39.7, 35.7]  # Esempio di rapporti del cambio
+
+    def update(self, throttle, brake, clutch, gear, steer):
+        # Aggiorna la marcia
+        if 0 < gear < len(self.gear_ratios):
+            self.gear = gear
+
+        # Calcola la nuova velocità e RPM in base all'accelerazione e alla marcia
+        if throttle > 0:
+            acceleration = throttle * 10.68  # Acceleration rate
+            self.speed += acceleration
+            if self.speed > self.max_speed:
+                self.speed = self.max_speed
+
+        if brake > 0:
+            deceleration = brake * 39  # Deceleration rate
+            self.speed -= deceleration
+            if self.speed < 0:
+                self.speed = 0
+
+        # Calcola gli RPM in base alla velocità e alla marcia
+        if self.gear > 0:
+            self.rpm = self.speed * self.gear_ratios[self.gear]
+            if self.rpm > self.max_rpm:
+                self.rpm = self.max_rpm
+
+        # Aggiorna la direzione della macchina basata sull'angolo di sterzata
+        steer_radians = np.deg2rad(steer)
+        self.direction += steer_radians * 0.01  # Adjust the steering sensitivity
+
+        # Aggiorna la posizione della macchina
+        self.position[0] += self.speed * np.cos(self.direction)
+        self.position[1] += self.speed * np.sin(self.direction)
+
+        return self.get_state()
+
+    def get_state(self):
+        return {
+            "speed": self.speed,
+            "rpm": self.rpm,
+            "gear": self.gear,
+            "direction": self.direction,
+            "position_x": self.position[0],
+            "position_y": self.position[1]
+        }
+
 
 def train_model():
 
-    start_json_node_client()
+    # start_json_node_client()
 
     # Carica e normalizza i dati JSON
     df = load_and_normalize_json()
 
-    # Verifica che tutte le colonne esistano
-    print("Colonne disponibili nel DataFrame:", df.columns)
+    simulator = CarSimulator()
+    simulation_data = []
 
-    # Selezionare solo le colonne numeriche per X_train
-    X_train = df.select_dtypes(include=[np.number])
+    # Simulazione del giro di pista
+    for _, record in df.iterrows():
+        throttle = record['m_throttle']
+        brake = record['m_brake']
+        clutch = record['m_clutch']
+        gear = record['m_gear']
+        steer_angle = record['m_steer']  # Assumi che l'angolo di sterzata sia in gradi
+        if not math.isnan(steer_angle) or not math.isnan(throttle) or not math.isnan(brake) or not math.isnan(clutch) or not math.isnan(gear):
+            print("Throttle: ", throttle)
+            print("Brake: ", brake)
+            print("Clutch: ", clutch)
+            gear = int(gear)
+            print("Gear: ", gear)
+            print("Steer angle: ", steer_angle)
+            state = simulator.update(throttle, brake, clutch, gear, steer_angle)
+            simulation_data.append(state)
+            print("State: ", state)
+            print("------------------------------------------------------------")
 
-    # Rimuovere le colonne target da X_train se sono presenti
-    y_columns = ['m_speed', 'm_throttle', 'm_steer', 'm_brake', 'm_clutch', 'm_gear', 'm_engineRPM',
-                 'm_tyresSurfaceTemperature_0', 'm_tyresSurfaceTemperature_1', 'm_tyresSurfaceTemperature_2',
-                 'm_tyresSurfaceTemperature_3']
-    X_train = X_train.drop(columns=y_columns, errors='ignore')
+    # Salvataggio dei dati simulati in un file CSV
+    simulation_df = pd.DataFrame(simulation_data)
+    simulation_df.to_csv('simulation_data.csv', index=False)
 
-    y_train = df[y_columns]
+    print("DataFrame originale:\n", df.head())
 
-    # Espandi la dimensione del tuo input
-    X_train = np.expand_dims(X_train.values, axis=1)
+    # Controllo dei valori NaN nel DataFrame
+    print("\nNumero di valori NaN per colonna:\n", df.isna().sum())
 
-    # Convertire X_train e y_train in float32
-    X_train = X_train.astype('float32')
-    y_train = y_train.astype('float32')
+    # Sostituzione dei NaN con 0
+    df.fillna(0, inplace=True)
 
-    # Verificare le forme dei dati
-    print("Shape di X_train:", X_train.shape)
-    print("Shape di y_train:", y_train.shape)
+    # Controllo del DataFrame dopo la sostituzione dei NaN
+    print("\nDataFrame dopo la sostituzione dei NaN:\n", df.head())
 
-    # Carica lo scaler se esiste
-    scaler_X_file_path = "scaler_X.pkl"
-    scaler_y_file_path = "scaler_y.pkl"
+    # Selezione delle colonne di input e output
+    input_columns = ['m_worldPositionX', 'm_worldPositionY', 'm_worldPositionZ',
+                     'm_worldVelocityX', 'm_worldVelocityY', 'm_worldVelocityZ',
+                     'm_worldForwardDirX', 'm_worldForwardDirY', 'm_worldForwardDirZ',
+                     'm_worldRightDirX', 'm_worldRightDirY', 'm_worldRightDirZ',
+                     'm_gForceLateral', 'm_gForceLongitudinal', 'm_gForceVertical',
+                     'm_yaw', 'm_pitch', 'm_roll', 'm_engineRPM']
 
-    scaler_X = load_scaler(scaler_X_file_path)
-    scaler_y = load_scaler(scaler_y_file_path)
+    output_columns = ['m_throttle', 'm_brake', 'm_clutch', 'm_gear']
 
-    if scaler_X is None or scaler_y is None:
-        # Se gli scaler non esistono, creane uno nuovo e salvalo
-        scaler_X = StandardScaler()
-        scaler_y = StandardScaler()
-        X_train_scaled = scaler_X.fit_transform(X_train.reshape(-1, X_train.shape[-1])).reshape(X_train.shape)
-        y_train_scaled = scaler_y.fit_transform(y_train)
-        joblib.dump(scaler_X, scaler_X_file_path)
-        joblib.dump(scaler_y, scaler_y_file_path)
-    else:
-        try:
-            X_train_scaled = scaler_X.transform(X_train.reshape(-1, X_train.shape[-1])).reshape(X_train.shape)
-            y_train_scaled = scaler_y.transform(y_train)
-        except ValueError as e:
-            scaler_X = StandardScaler()
-            scaler_y = StandardScaler()
-            X_train_scaled = scaler_X.fit_transform(X_train.reshape(-1, X_train.shape[-1])).reshape(X_train.shape)
-            y_train_scaled = scaler_y.fit_transform(y_train)
-            joblib.dump(scaler_X, scaler_X_file_path)
-            joblib.dump(scaler_y, scaler_y_file_path)
+    # Normalizzazione dei dati
+    scaler_X = StandardScaler()
+    df[input_columns] = scaler_X.fit_transform(df[input_columns])
 
-    print("Disabilitazione delle GPU...")
-    tf.config.set_visible_devices([], 'GPU')
+    # Definizione dell'ambiente Gym
+    class RacingEnv(gym.Env):
+        def __init__(self, df):
+            super(RacingEnv, self).__init__()
+            self.df = df
+            self.current_step = 0
+            self.action_space = gym.spaces.Box(low=np.array([0, 0, 0, 0]), high=np.array([1, 1, 1, 1]),
+                                               dtype=np.float32)
+            self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(4,),
+                                                    dtype=np.float32)  # Speed, RPM, Gear, Position
 
-    model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=(X_train_scaled.shape[1], X_train_scaled.shape[2])))
-    model.add(Dropout(0.2))  # Regolarizzazione per evitare l'overfitting
-    model.add(LSTM(50, return_sequences=False))
-    model.add(Dropout(0.2))
-    model.add(Dense(y_train_scaled.shape[1]))  # Numero di neuroni uguale al numero di colonne target
-    model.compile(optimizer='adam', loss='mean_squared_error')
+        def reset(self, seed=None, options=None):
+            super().reset(seed=seed)
+            self.current_step = 0
+            return self.df.iloc[self.current_step].values, {}
 
-    print("Sommario del modello:")
-    model.summary()
+        def step(self, action):
+            throttle, brake, clutch, gear = action
+            self.current_step += 1
+            if self.current_step >= len(self.df):
+                self.current_step = 0  # Ricomincia dall'inizio per continuare l'addestramento
 
-    print("Training del modello...")
-    callbacks = [ProgbarLogger(), CustomCallback()]
-    model.fit(X_train_scaled, y_train_scaled, epochs=10, batch_size=32, callbacks=callbacks)
+            state = self.df.iloc[self.current_step].values
 
-    print("Predizione con il modello addestrato...")
-    y_pred_scaled = model.predict(X_train_scaled)
-    y_pred = scaler_y.inverse_transform(y_pred_scaled)
-    mse = mean_squared_error(y_train, y_pred)
-    print(f'Mean Squared Error: {mse}')
+            reward = self.calculate_reward(state, action)
 
-    model.save('f1_deep_learning_model.h5')
-    joblib.dump(scaler_X, scaler_X_file_path)
-    joblib.dump(scaler_y, scaler_y_file_path)
+            done = self.current_step == len(self.df) - 1
+
+            return state, reward, done, False, {}
+
+        def calculate_reward(self, state, action):
+            speed, rpm, gear, position_x, position_y = state
+
+            reward = 0
+            optimal_rpm_low = 10000.0
+            optimal_rpm_high = 13500.0
+
+            # Penalità per RPM non ottimali
+            if optimal_rpm_low <= rpm <= optimal_rpm_high:
+                reward += 1
+            else:
+                reward -= 0.1
+
+            # Penalità per cambi di marcia non ottimali
+            if gear > 0 and (rpm < optimal_rpm_low or rpm > optimal_rpm_high):
+                reward -= 0.5
+
+            # Penalità per velocità troppo alta
+            if speed > 350:
+                reward -= 1
+
+            return reward
+
+    # Creazione dell'ambiente con il wrapper VecMonitor
+    env = DummyVecEnv([lambda: RacingEnv(df)])
+    env = VecMonitor(env)
+
+    # Addestramento del modello PPO
+    model = PPO('MlpPolicy', env, verbose=1)
+    model.learn(total_timesteps=10000)
+
+    # Valutazione del modello
+    mean_reward, std_reward = evaluate_policy(model, env, n_eval_episodes=10)
+    print(f"Mean reward: {mean_reward} +/- {std_reward}")
+
+    # Salvataggio del modello
+    model.save("ppo_racing")
+
+    # Caricamento del modello
+    model = PPO.load("ppo_racing")
+
+    # Predizione delle azioni
+    obs = env.reset()
+    for i in range(len(df)):
+        action, _states = model.predict(obs)
+        obs, rewards, dones, info = env.step(action)
+        print(f"Step {i}, Action: {action}, Reward: {rewards}")
 
     print("Fine del programma.")
+    exit(0)
 
 def preprocess_and_predict(data, model, scaler):
     features = pd.DataFrame(data)
@@ -662,7 +788,7 @@ def start_json_node_client():
         time.sleep(5)
 
         # wait for 30 minutes and then kill the process
-        total_seconds = 30 * 60
+        total_seconds = 1 * 60
 
         for elapsed_seconds in range(total_seconds + 1):
             print_progress_bar(elapsed_seconds, total_seconds)
