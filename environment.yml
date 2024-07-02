@@ -122,8 +122,8 @@ dependencies:
       - nbformat==5.10.4
       - nest-asyncio==1.6.0
       - networkx==3.2.1
-      - notebook==7.2.0
-      - notebook-shim==0.2.4
+      - speed_notebook==7.2.0
+      - speed_notebook-shim==0.2.4
       - npm==0.1.1
       - numpy==1.26.4
       - opt-einsum==3.3.0
