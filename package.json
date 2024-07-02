@@ -2,12 +2,13 @@
   "name": "ai-project",
   "version": "1.0.0",
   "description": "",
-  "main": "src/main.py",
+  "main": "src/speed_prediction.py",
   "scripts": {
-    "start": "python src/main.py"
+    "start": "python src/speed_prediction.py"
   },
   "private": true,
-    "dependencies": {
+  "dependencies": {
+    "csv-stringify": "^6.5.0",
     "f1-telemetry-client": "file:./f1-telemetry-client"
   }
 }
